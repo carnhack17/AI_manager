@@ -1,10 +1,3 @@
-import { Anthropic } from "@anthropic-ai/sdk";
-
-// Initialize Anthropic client
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
 // System prompt for classification and response generation
 const SYSTEM_PROMPT = `You are an intelligent email/message analyzer assistant.
 
@@ -35,6 +28,7 @@ export const handler = async (event) => {
     return {
       statusCode: 405,
       body: JSON.stringify({ error: "Method not allowed" }),
+      headers: { "Content-Type": "application/json" },
     };
   }
 
@@ -46,24 +40,40 @@ export const handler = async (event) => {
       return {
         statusCode: 400,
         body: JSON.stringify({ error: "Message is required and must be a non-empty string" }),
+        headers: { "Content-Type": "application/json" },
       };
     }
 
-    // Call Anthropic Claude API
-    const response = await client.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 500,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: message.trim(),
-        },
-      ],
+    // Call Anthropic Claude API using fetch (no SDK dependency)
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-haiku-20241022",
+        max_tokens: 500,
+        system: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: message.trim(),
+          },
+        ],
+      }),
     });
 
-    // Extract the text response
-    const textContent = response.content.find((block) => block.type === "text");
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || `API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Extract text from response
+    const textContent = data.content.find((block) => block.type === "text");
     if (!textContent) {
       throw new Error("No text content in response");
     }
@@ -84,7 +94,7 @@ export const handler = async (event) => {
 
     // Validate result structure
     if (!result.intent || !result.sentiment || !result.reply) {
-      throw new Error("Response missing required fields");
+      throw new Error("Response missing required fields: intent, sentiment, reply");
     }
 
     return {
